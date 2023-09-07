@@ -1,14 +1,12 @@
 import colorsys  # Polygon regions.
 from pprint import pprint
+from typing import Optional, Tuple, Union, Dict
 import cv2  # Polygon regions.
 import gradio as gr
 import numpy as np
 import PIL
 import torch
 from modules import devices
-
-def lange(l):
-    return range(len(l))
 
 # SBM Keywords and delimiters for region breaks, following matlab rules.
 # BREAK keyword is now passed through,  
@@ -415,26 +413,48 @@ SBM mod: Mask polygon region.
 - Added -1 colour to clear sections, an eraser.
 """
 
-POLYFACTOR = 1.5 # Small lines are detected as shapes.
-COLREG = None # Computed colour regions cache. Array. Extended whenever a new colour is requested.
-REGUSE = dict() # Used regions. Reset on new canvas / upload (preset). 
-IDIM = 512
-CBLACK = 255
-MAXCOLREG = 360 - 1 # Hsv goes by degrees.
-VARIANT = 0 # Ensures that the sketch canvas is actually refreshed.
+class RegionsProcessingContext:
+    def __init__(self):
+        self.state_dict = {
+            "COLREG": None, # Computed colour regions cache. Array. Extended whenever a new colour is requested.
+            "REGUSE": dict(), # Used regions. Reset on new canvas / upload (preset).
+            "VARIANT": 0, # Ensures that the sketch canvas is actually refreshed.
+            "INDCOLREPL": False,
+        }
+        
+    # set accessors
+    def __setitem__(self, key, value):
+        self.state_dict[key] = value
+        
+    # get accessors
+    def __getitem__(self, key):
+        return self.state_dict[key]
+    
+    # hint accessors
+    def keys_hint(self):
+        return ("COLREG","REGUSE","VARIANT","INDCOLREPL")
+    
+    
+#TODO : This global shared state is a mess. It prevents multiple instances and reusing functions for other purposes.
+CONTEXT = RegionsProcessingContext() # Global state for processing.
 # Permitted hsv error range for mask upload (due to compression).
 # Mind, wrong hue might throw off the mask entirely and is not corrected.
 # HSV_RANGE = (125,130)
 # HSV_VAL = 128
-HSV_RANGE = (0.49,0.51)
-HSV_VAL = 0.5
-CCHANNELS = 3
-COLWHITE = (255,255,255)
+# Immutable values, should not ever change
+POLYFACTOR_CONSTANT = 1.5 # Small lines are detected as shapes.
+IDIM_CONSTANT = 512
+CBLACK_CONSTANT = 255
+MAXCOLREG_CONSTANT = 360 - 1 # Hsv goes by degrees.
+HSV_RANGE_CONSTANT = (0.49,0.51)
+HSV_VAL_CONSTANT = 0.5
+CCHANNELS_CONSTANT = 3
+COLWHITE_CONSTANT = (255,255,255)
 # Optional replacement mode of nonstandard colours from the mask during upload with white.
 # Pros: Clear and obvious display of regions.
 # Cons: Cannot use the image as a background for tracing (eg openpose or depthmap).
 # Compromise: Do not replace, but show the used regions.
-INDCOLREPL = False
+
 
 def get_colours(img):
     """List colours used in image (as nxc array).
@@ -448,7 +468,7 @@ def generate_unique_colours(n):
     Uses the hue of hsv, with balanced saturation & value.
     """
     hsv_colors = [(x*1.0/n, 0.5, 0.5) for x in range(n)]
-    rgb_colors = [tuple(int(i * CBLACK) for i in colorsys.hsv_to_rgb(*hsv)) for hsv in hsv_colors]
+    rgb_colors = [tuple(int(i * CBLACK_CONSTANT) for i in colorsys.hsv_to_rgb(*hsv)) for hsv in hsv_colors]
     return rgb_colors
 
 def deterministic_colours(n, lcol = None):
@@ -492,8 +512,8 @@ def deterministic_colours(n, lcol = None):
         lhsv.append(cval)
     lhsv = [(v, 0.5, 0.5) for v in lhsv] # Hsv conversion only works 0:1.
     lrgb = [colorsys.hsv_to_rgb(*hsv) for hsv in lhsv]
-    lrgb = (np.array(lrgb) * (CBLACK + 1)).astype(np.uint8) # Convert to colour uints.
-    lrgb = lrgb.reshape(-1, CCHANNELS)
+    lrgb = (np.array(lrgb) * (CBLACK_CONSTANT + 1)).astype(np.uint8) # Convert to colour uints.
+    lrgb = lrgb.reshape(-1, CCHANNELS_CONSTANT)
     if lcol is not None:
         lrgb = np.concatenate([lcol, lrgb])
     return lrgb
@@ -505,41 +525,45 @@ def index_rows(mat):
     """
     return np.concatenate([np.arange(len(mat)).reshape(-1,1),mat],axis = 1)
 
-def detect_image_colours(img, inddict = False):
-    """Detect relevant hsv colours in image and clean up the standard mask.
+def cleaned_detect_image_colours(img:Optional[np.ndarray]) -> Tuple[Optional[Union[np.ndarray, Dict[str,np.ndarray]]]]:
+    pass
     
-    Basically, converts colours to hsv, checks which ones are within range,
-    converts them to the exact sv value we need, deletes irrelevant colours,
-    and creates a list of used colours via a form of np first row lookup.
-    Problem: Rgb->hsb and back is not lossless in np / cv. Getting 128->127.
-    Looks like the only option is to use colorsys which is contiguous.
-    To maximise efficiency, I've applied it to the unique colours instead of entire image,
-    and then each colour is mapped via np masking (propagation),
-    by adding a third fake dim for each of colours, flattened image.
-    It might be possible to use cv2 one way for the filter, but I think that's risky,
-    and likely doesn't save much processing (heaviest op is get_colours for large image).
-    Creep: Apply erosion so thin regions are ignored. This would need be applied on processing as well.
+
+def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context=None) -> Tuple[Optional[Union[np.ndarray, Dict[str,np.ndarray]]], None]:
+    """Detect relevant hsv colours in image and clean up the standard mask.
+    It always return None as second value, wtf?
     """
-    global REGUSE
-    global COLREG
-    global VARIANT
+    #    Basically, converts colours to hsv, checks which ones are within range,
+    #converts them to the exact sv value we need, deletes irrelevant colours,
+    #and creates a list of used colours via a form of np first row lookup.
+    #Problem: Rgb->hsb and back is not lossless in np / cv. Getting 128->127.
+    #Looks like the only option is to use colorsys which is contiguous.
+    #To maximise efficiency, I've applied it to the unique colours instead of entire image,
+    #and then each colour is mapped via np masking (propagation),
+    #by adding a third fake dim for each of colours, flattened image.
+    #It might be possible to use cv2 one way for the filter, but I think that's risky,
+    #and likely doesn't save much processing (heaviest op is get_colours for large image).
+    #Creep: Apply erosion so thin regions are ignored. This would need be applied on processing as well.
+    if context is None:
+        global CONTEXT
+        context = CONTEXT
     if img is None: # Do nothing if no image passed. 
         return None, None
-    VARIANT = 0 # Upload doesn't need variance, it refreshes automatically.
+    context['VARIANT'] = 0 # Upload doesn't need variance, it refreshes automatically.
     (h,w,c) = img.shape
     # Get unique colours, create rgb-hsv mapping and filtering.
     # hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     # skimg = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2RGB)
     lrgb = get_colours(img)
-    lhsv = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = lrgb / CBLACK)
-    msk = ((lhsv[:,1] >= HSV_RANGE[0]) & (lhsv[:,1] <= HSV_RANGE[1]) &
-           (lhsv[:,2] >= HSV_RANGE[0]) & (lhsv[:,2] <= HSV_RANGE[1]))
+    lhsv = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = lrgb / CBLACK_CONSTANT)
+    msk = ((lhsv[:,1] >= HSV_RANGE_CONSTANT[0]) & (lhsv[:,1] <= HSV_RANGE_CONSTANT[1]) &
+           (lhsv[:,2] >= HSV_RANGE_CONSTANT[0]) & (lhsv[:,2] <= HSV_RANGE_CONSTANT[1]))
     lfltrgb = lrgb[msk]
     lflthsv = lhsv[msk]
-    lflthsv[:,1:] = HSV_VAL
+    lflthsv[:,1:] = HSV_VAL_CONSTANT
     if len(lfltrgb) > 0:
         lfltfix = np.apply_along_axis(lambda x: colorsys.hsv_to_rgb(*x), axis=-1, arr=lflthsv)
-        lfltfix = (lfltfix * (CBLACK + 1)).astype(np.uint8)
+        lfltfix = (lfltfix * (CBLACK_CONSTANT + 1)).astype(np.uint8)
     else: # No relevant colours.
         lfltfix = lfltrgb
     # Mask update each colour in the image.
@@ -557,14 +581,14 @@ def detect_image_colours(img, inddict = False):
         img[msk2[i]] = lfltfix[i]
     # Empty all nonfiltered regions.
     msk3 = ~(msk2.any(axis = 0))
-    if INDCOLREPL: # Don't remove nonstandard.
-        img[msk3] = COLWHITE
+    if context['INDCOLREPL']: # Don't remove nonstandard.
+        img[msk3] = COLWHITE_CONSTANT
     # Gen all colours, match with the fixed filtered list.
     # I can think of no mathematical function to inverse the colour gen function.
     # Also, imperfect hash, so ~60 colours go over the edge. Should have 100% matches at x2. 
-    COLREG = deterministic_colours(2 * MAXCOLREG, COLREG)
-    cow = index_rows(COLREG)
-    regrows = [cow[(COLREG == f).all(axis = 1)] for f in lfltfix]
+    context['COLREG'] = deterministic_colours(2 * MAXCOLREG_CONSTANT, context['COLREG'])
+    cow = index_rows(context['COLREG'])
+    regrows = [cow[(context['COLREG'] == f).all(axis = 1)] for f in lfltfix]
     # MAX_KEY_VALUE provides a threshold value. Only those colors are added to REGUSE, for which the key values 
     # (i.e., the indices of the colors in the 'regrows' array) are less than this threshold.
     # Colors with indices greater than MAX_KEY_VALUE are considered "similar colors" and are not treated as separate masks. 
@@ -574,7 +598,7 @@ def detect_image_colours(img, inddict = False):
     # By setting an appropriate MAX_KEY_VALUE, these minor color differences can be effectively filtered out, 
     # thereby reducing the number of colors being processed and making color processing more accurate and efficient.
     MAX_KEY_VALUE = len(unique_keys) + 20
-    REGUSE = {reg[0,0]: reg[0,1:].tolist() for reg in regrows if len(reg) > 0 and reg[0,0] <= MAX_KEY_VALUE}
+    context['REGUSE'] = {reg[0,0]: reg[0,1:].tolist() for reg in regrows if len(reg) > 0 and reg[0,0] <= MAX_KEY_VALUE}
     # REGUSE.discard(COLWHITE)
     
     # Must set to dict due to gradio preprocess assertion, in preset load.
@@ -584,19 +608,22 @@ def detect_image_colours(img, inddict = False):
     
     return img, None # Clears the upload area. A bit cleaner.
 
-def save_mask(img, flpath):
+def save_mask(img, flpath, context = None):
     """Save mask to file.
     
     These will be loaded as part of a preset.
     Cv's colour scheme is an annoyance, but avoiding yet another import. 
     """
     # Cv's colour scheme is annoying.
+    if context is None:
+        global CONTEXT
+        context = CONTEXT
     try:
         img = img["image"]
     except Exception:
         pass
-    if VARIANT != 0: # Always save without variance.
-        img = img[:-VARIANT,:-VARIANT,:]
+    if context['VARIANT'] != 0: # Always save without variance.
+        img = img[:-context['VARIANT'],:-context['VARIANT'],:]
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     cv2.imwrite(flpath, img)
 
@@ -612,28 +639,28 @@ def load_mask(flpath):
         img = None
     return img
 
-def detect_polygons(img,num):
+def detect_polygons(img,num, context:None):
     """Convert stroke + region to standard coloured mask.
     
     Negative colours will clear the mask instead, and not ++.
     """
-    global COLREG
-    global VARIANT
-    global REGUSE
+    if context is None:
+        global CONTEXT
+        context = CONTEXT
 
     # I dunno why, but mask has a 4th colour channel, which contains nothing. Alpha?
-    if VARIANT != 0:
-        out = img["image"][:-VARIANT,:-VARIANT,:CCHANNELS]
-        img = img["mask"][:-VARIANT,:-VARIANT,:CCHANNELS]
+    if context['VARIANT'] != 0:
+        out = img["image"][:-context['VARIANT'],:-context['VARIANT'],:CCHANNELS_CONSTANT]
+        img = img["mask"][:-context['VARIANT'],:-context['VARIANT'],:CCHANNELS_CONSTANT]
     else:
-        out = img["image"][:,:,:CCHANNELS]
-        img = img["mask"][:,:,:CCHANNELS]
+        out = img["image"][:,:,:CCHANNELS_CONSTANT]
+        img = img["mask"][:,:,:CCHANNELS_CONSTANT]
 
     # Convert the binary image to grayscale
     if img is None:
-        img = np.zeros([IDIM,IDIM,CCHANNELS],dtype = np.uint8) + CBLACK # Stupid cv.
+        img = np.zeros([IDIM_CONSTANT,IDIM_CONSTANT,CCHANNELS_CONSTANT],dtype = np.uint8) + CBLACK_CONSTANT # Stupid cv.
     if out is None:
-        out = np.zeros_like(img) + CBLACK # Stupid cv.
+        out = np.zeros_like(img) + CBLACK_CONSTANT # Stupid cv.
     bimg = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
     # Find contours in the image
@@ -644,11 +671,11 @@ def detect_polygons(img,num):
     img2 = out # Update current image.
 
     if num < 0:
-        color = COLWHITE
+        color = COLWHITE_CONSTANT
     else:
-        COLREG = deterministic_colours(int(num) + 1, COLREG)
-        color = COLREG[int(num),:]
-        REGUSE[num] = color.tolist()
+        context['COLREG'] = deterministic_colours(int(num) + 1, context['COLREG'])
+        color = context['COLREG'][int(num),:]
+        context['REGUSE'][num] = color.tolist()
     # Loop through each contour and detect polygons
     for cnt in contours:
         # Approximate the contour to a polygon
@@ -656,7 +683,7 @@ def detect_polygons(img,num):
 
         # If the polygon has 3 or more sides and is fully enclosed, fill it with a random color
         # if len(approx) >= 3: # BAD test.
-        if cv2.contourArea(cnt) > cv2.arcLength(cnt, True) * POLYFACTOR: # Better, still messes up on large brush.
+        if cv2.contourArea(cnt) > cv2.arcLength(cnt, True) * POLYFACTOR_CONSTANT: # Better, still messes up on large brush.
             #SBM BUGGY, prevents contours from . cv2.pointPolygonTest(approx, (approx[0][0][0], approx[0][0][1]), False) >= 0:
             
             # Draw the polygon on the image with a new random color
@@ -667,90 +694,115 @@ def detect_polygons(img,num):
     # Convert the grayscale image back to RGB
     #img2 = cv2.cvtColor(img2, cv2.COLOR_GRAY2RGB) # Converting to grayscale is dumb.
 
-    skimg = create_canvas(img2.shape[0], img2.shape[1], indwipe = False)
-    if VARIANT != 0:
-        skimg[:-VARIANT,:-VARIANT,:] = img2
+    skimg = create_canvas(img2.shape[0], img2.shape[1], indwipe = False, context=context)
+    if context['VARIANT'] != 0:
+        skimg[:-context['VARIANT'],:-context['VARIANT'],:] = img2
     else:
         skimg[:,:,:] = img2
     print("Region sketch size", skimg.shape)    
-    return skimg, num + 1 if (num >= 0 and num + 1 <= CBLACK) else num
+    return skimg, num + 1 if (num >= 0 and num + 1 <= CBLACK_CONSTANT) else num
 
-def detect_mask(img, num, mult = CBLACK):
+def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context = None):
     """Extract specific colour and return mask.
     
     Multiplier for correct display.
     Also tags colour in case someone uses the upload interface. 
     """
-    global REGUSE
-    try:
-        img = img["image"]
-    except Exception:
-        pass
+    if context is None:
+        global CONTEXT
+        context = CONTEXT
+    if hasattr(img_input, "image"):
+        img = img_input.image
+    elif isinstance(img_input, dict) and "image" in img:
+        img = img_input["image"]
+    else:
+        img = img_input
     if img is None:
         return None
     indnot = False
     if num < 0: # Detect unmasked region.
-        if INDCOLREPL: # In replacement mode, all colours are either region or white.
-            color = np.array(COLWHITE).reshape([1,1,CCHANNELS])
+        if context['INDCOLREPL']: # In replacement mode, all colours are either region or white.
+            color = np.array(COLWHITE_CONSTANT).reshape([1,1,CCHANNELS_CONSTANT])
         else: # In nonrepl mode, mask all the regions and invert.
-            color = np.array(list(REGUSE.values())) # nx3
+            color = np.array(list(context['REGUSE'].values())) # nx3
             color = np.moveaxis(color,-1,0) # 3xn
             color = color.reshape(1,1,*color.shape) # 1x1x3xn
             img = img.reshape(*img.shape,1) # Same.
             indnot = True
     else:
         color = deterministic_colours(int(num) + 1)[-1]
-        color = color.reshape([1,1,CCHANNELS])
+        color = color.reshape([1,1,CCHANNELS_CONSTANT])
     if indnot: # Negation of a list of regions.
         mask = (~(img == color)).all(-1).all(-1)
         mask = mask * mult
     else:
         mask = ((img == color).all(-1)) * mult
     if mask.sum() > 0 and num >= 0:
-        REGUSE[num] = color.reshape(-1).tolist()
+        context['REGUSE'][num] = color.reshape(-1).tolist()
     return mask
 
-def draw_region(img, num):
+def draw_region(img, num,context = None):
     """Simply runs polygon detection, followed by mask on result.
     
     Saves extra inconvenient button. Since num is auto incremented, we take the old val.
     """
-    img, num2 = detect_polygons(img, num)
-    mask = detect_mask(img, num)
+    img, num2 = detect_polygons(img, num, context=context)
+    mask = detect_mask(img, num,context=context)
     # Gradio is stupid, I have to force feed it a dict so preprocess doesn't break.
     # Disabled here, can only be fixed reliably in preprocess.
     # dimg = {"image":img, "mask": None}
     dimg = img
     return dimg, num2, mask
 
-def draw_image(img, inddict = False):
+def draw_image(img_input, inddict = False, context = None):
     """Runs colour detection followed by mask on -1 to show which colours are regions.
     
     """
-    img, clearer = detect_image_colours(img,inddict)
-    mask = detect_mask(img, -1)
-    dimg = img
+    img, clearer = detect_image_colours(img_input,inddict, context=context) # this is main function
+    mask = detect_mask(img, -1, context=context) # this does not do anything for the image
+    dimg = img # but wtf is this
     return dimg, clearer, mask
 
-def create_canvas(h, w, indwipe = True):
+def create_canvas(h, w, indwipe = True, context = None):
     """New region sketch area.
     
     Small variant value is added (and ignored later) due to gradio refresh bug.
     Meant to be used only to start over or when the image dims change.
     """
-    global VARIANT
-    global REGUSE
-    VARIANT = 1 - VARIANT
+    if context is None:
+        global CONTEXT
+        context = CONTEXT
+    context['VARIANT'] = 1 - context['VARIANT']
     if indwipe:
-        REGUSE = dict()
-    vret =  np.zeros(shape = (h + VARIANT, w + VARIANT, CCHANNELS), dtype = np.uint8) + CBLACK
+        context['REGUSE'] = dict()
+    vret =  np.zeros(shape = (h + context['VARIANT'], w + context['VARIANT'], CCHANNELS_CONSTANT), dtype = np.uint8) + CBLACK_CONSTANT
     return vret
 
+class FakeMaskDebugging:
+    """
+    Fake object for debugging.
+    """
+    def __init__(self) -> None:
+        self.debug = False
+        self.regmasks = []
+        self.usebase = False
+        self.regbase = None
+        
 # SBM In mask mode, grabs each mask from coloured mask image.
 # If there's no base, remainder goes to first mask.
 # If there's a base, it will receive its own remainder mask, applied at 100%.
-def inpaintmaskdealer(self, p, bratios, usebase, polymask):
-    prompt = p.prompt
+def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, context = None):
+    """
+    wtf is this in-place operation... 
+    After draw_image, polymask is used here.
+    """
+    if context is None:
+        global CONTEXT
+        context = CONTEXT
+    if hasattr(processing_pipeline, "prompt"):
+        prompt = processing_pipeline.prompt
+    else:
+        prompt = "" #debugging.
     if self.debug: print("in inpaintmaskdealer",prompt)
     if KEYCOMM in prompt: prompt = prompt.split(KEYCOMM,1)[1]
     if KEYBASE in prompt: prompt = prompt.split(KEYBASE,1)[1]
@@ -759,10 +811,10 @@ def inpaintmaskdealer(self, p, bratios, usebase, polymask):
     tm = None
     # Sort colour dict by key, return value for masking.
     #for _,c in sorted(REGUSE.items(), key = lambda x: x[0]):
-    for c in sorted(REGUSE.keys()):
-        m = detect_mask(polymask, c, 1)
-        if VARIANT != 0:
-            m = m[:-VARIANT,:-VARIANT]
+    for c in sorted(context['REGUSE'].keys()):
+        m = detect_mask(polymask, c, 1, context=context)
+        if context['VARIANT'] != 0:
+            m = m[:-context['VARIANT'],:-context['VARIANT']]
         if m.any():
             if tm is None:
                 tm = np.zeros_like(m) # First mask is ignored deliberately.

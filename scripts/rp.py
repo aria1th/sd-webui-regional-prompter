@@ -25,10 +25,11 @@ from json.decoder import JSONDecodeError
 from scripts.attention import (TOKENS, hook_forwards, reset_pmasks, savepmasks)
 from scripts.latent import (denoised_callback_s, denoiser_callback_s, lora_namer,
                             restoremodel, setloradevice, setuploras, unloadlorafowards)
-from scripts.regions import (MAXCOLREG, IDIM, KEYBRK, KEYBASE, KEYCOMM, KEYPROMPT, ALLKEYS, ALLALLKEYS,
+from scripts.regions import (MAXCOLREG_CONSTANT, IDIM_CONSTANT, KEYBRK, KEYBASE, KEYCOMM, KEYPROMPT, ALLKEYS, ALLALLKEYS,
                              create_canvas, draw_region, #detect_mask, detect_polygons,  
                              draw_image, save_mask, load_mask, changecs,
                              floatdef, inpaintmaskdealer, makeimgtmp, matrixdealer)
+from scripts.image_util import decode_data
 
 FLJSON = "regional_prompter_presets.json"
 # Modules.basedir points to extension's dir. script_path or scripts.basedir points to root.
@@ -88,14 +89,14 @@ def ui_tab(mode, submode):
                                 source = "upload", mirror_webcam = False, type = "numpy", tool = "sketch")#.style(height=480)
         with gr.Row():
             with gr.Column():
-                num = gr.Slider(label="Region", minimum=-1, maximum=MAXCOLREG, step=1, value=1)
+                num = gr.Slider(label="Region", minimum=-1, maximum=MAXCOLREG_CONSTANT, step=1, value=1)
                 canvas_width = gr.Slider(label="Inpaint+ Width", minimum=64, maximum=2048, value=512, step=8)
                 canvas_height = gr.Slider(label="Inpaint+ Height", minimum=64, maximum=2048, value=512, step=8)
                 btn = gr.Button(value = "Draw region + show mask")
                 # btn2 = gr.Button(value = "Display mask") # Not needed.
                 cbtn = gr.Button(value="Create mask area")
             with gr.Column():
-                showmask = gr.Image(label = "Mask", shape=(IDIM, IDIM))
+                showmask = gr.Image(label = "Mask", shape=(IDIM_CONSTANT, IDIM_CONSTANT))
                 # CONT: Awaiting fix for https://github.com/gradio-app/gradio/issues/4088.
                 uploadmask = gr.Image(label="Upload mask here cus gradio",source = "upload", type = "numpy")
         # btn.click(detect_polygons, inputs = [polymask,num], outputs = [polymask,num])
@@ -348,8 +349,11 @@ class Script(modules.scripts.Script):
                 usebase, usecom, usencom, calcmode, nchangeand, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper):
         if type(polymask) == str:
             try:
-                polymask,_,_ = draw_image(np.array(Image.open(polymask)))
-            except:
+                polymask,_,_ = draw_image(decode_data(polymask))
+            except Exception as e:
+                # if rp_selected_tab == "Mask", then it has to raise error.
+                if rp_selected_tab == "Mask":
+                    raise Exception("Mask mode requires mask image.", e)
                 pass
 
         if debug: pprint([active, debug, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
