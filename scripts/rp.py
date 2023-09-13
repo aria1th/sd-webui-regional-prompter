@@ -22,7 +22,7 @@ except:
     pass
 import json  # Presets.
 from json.decoder import JSONDecodeError
-from scripts.attention import (TOKENS, hook_forwards, reset_pmasks, savepmasks)
+from scripts.attention import (TOKENS, hook_forwards, reset_prompt_context, save_prompt_context, get_default_context)
 from scripts.latent import (denoised_callback_s, denoiser_callback_s, lora_namer,
                             restoremodel, setloradevice, setuploras, unloadlorafowards)
 from scripts.regions import (MAXCOLREG_CONSTANT, IDIM_CONSTANT, KEYBRK, KEYBASE, KEYCOMM, KEYPROMPT, ALLKEYS, ALLALLKEYS,
@@ -418,6 +418,8 @@ class Script(modules.scripts.Script):
             keyconverter(aratios, self.mode, usecom, usebase, p) #convert BREAKs to ADDROMM/ADDCOL/ADDROW
         bckeydealer(self, p)                                                      #detect COMM/BASE keys
         keycounter(self, p)                                                       #count keys and set to self.divide
+        
+        regional_prompt_context = get_default_context() # get saved global context
             
         if "Pro" not in self.mode: # skip region assign in prompt mode
             ##### region mode
@@ -430,14 +432,14 @@ class Script(modules.scripts.Script):
     
             ##### calcmode 
             if "Att" in calcmode:
-                self.handle = hook_forwards(self, p.sd_model.model.diffusion_model)
+                self.handle = hook_forwards(self, p.sd_model.model.diffusion_model, regional_prompt_context=regional_prompt_context)
                 if hasattr(shared.opts,"batch_cond_uncond"):
                     shared.opts.batch_cond_uncond = orig_batch_cond_uncond
                 else:                    
                     shared.batch_cond_uncond = orig_batch_cond_uncond
                     
             else:
-                self.handle = hook_forwards(self, p.sd_model.model.diffusion_model,remove = True)
+                self.handle = hook_forwards(self, p.sd_model.model.diffusion_model,remove = True, regional_prompt_context=regional_prompt_context)
                 setuploras(self)
                 # SBM It is vital to use local activation because callback registration is permanent,
                 # and there are multiple script instances (txt2img / img2img). 
@@ -445,7 +447,7 @@ class Script(modules.scripts.Script):
         elif "Pro" in self.mode: #Prompt mode use both calcmode
             self.ex = "Ex" in self.mode
             if not usebase : bratios = "0"
-            self.handle = hook_forwards(self, p.sd_model.model.diffusion_model)
+            self.handle = hook_forwards(self, p.sd_model.model.diffusion_model, regional_prompt_context=regional_prompt_context)
             denoiserdealer(self)
 
         neighbor(self,p)                                                    #detect other extention
@@ -484,7 +486,8 @@ class Script(modules.scripts.Script):
                       usebase, usecom, usencom, calcmode,nchangeand, lnter, lnur, threshold, polymask,lstop, lstop_hr,flipper,**kwargs):
         # print(kwargs["prompts"])
         if self.active:
-            resetpcache(p)
+            regional_prompt_context = get_default_context() # get saved global context
+            resetpcache(p) # reset StableDiffusionProcessingPipeline cache
             self.in_hr = False
             self.xsize = 0
             # SBM Before_process_batch was added in feb-mar, adding fallback.
@@ -493,7 +496,7 @@ class Script(modules.scripts.Script):
             p.all_prompts[p.iteration * p.batch_size:(p.iteration + 1) * p.batch_size] = self.all_prompts[p.iteration * p.batch_size:(p.iteration + 1) * p.batch_size]
             p.all_negative_prompts[p.iteration * p.batch_size:(p.iteration + 1) * p.batch_size] = self.all_negative_prompts[p.iteration * p.batch_size:(p.iteration + 1) * p.batch_size]
             if "Pro" in self.mode:
-                reset_pmasks(self)
+                reset_prompt_context(self, context=regional_prompt_context)
             if "La" in self.calc:
                 setloradevice(self) #change lora device cup to gup and restore model in new web-ui lora method
                 lora_namer(self, p, lnter, lnur)
@@ -518,7 +521,7 @@ class Script(modules.scripts.Script):
                 file.write(processedx.infotext(p, 0))
         
         if "Pro" in self.mode and not fseti("hidepmask"):
-            savepmasks(self, processed)
+            save_prompt_context(self, processed, context=get_default_context())
 
         if self.debug : debugall(self)
 
