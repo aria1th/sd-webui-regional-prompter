@@ -186,8 +186,8 @@ def denoised_callback_s(self, params: CFGDenoisedParams):
 
         # x.shape = [batch_size, C, H // 8, W // 8]
 
-        if not "Pro" in self.mode:
-            indrebuild = self.filters == [] or self.filters[0].size() != x[0].size()
+        if not "Pro" in self.mode: # Prompt
+            indrebuild = self.filters == [] or self.filters[0].size() != x[0].size() or len(self.filters) != areas * batch
 
             if indrebuild:
                 if "Ran" in self.mode: # Random
@@ -199,9 +199,10 @@ def denoised_callback_s(self, params: CFGDenoisedParams):
                     if "Mask" in self.mode:
                         masks = (self.regmasks,self.regbase)
                     else:
-                        masks = self.aratios  #makefilters(c,h,w,masks,mode,usebase,bratios,indmask = None)
-                    self.filters = makefilters(x.shape[1], x.shape[2], x.shape[3],masks, self.mode, self.usebase, self.bratios, indmask="Mask" in self.mode)
-                self.filters = [f for f in self.filters]*batch
+                        masks = self.aratios  #makefilters(c,h,w,masks,mode,usebase,bratios,is_mask = None)
+                    self.filters = makefilters(x.shape[1], x.shape[2], x.shape[3], masks, self.mode, self.usebase, self.bratios, is_mask="Mask" in self.mode)
+                if batch > 1:
+                    self.filters = [f for f in self.filters]*batch # for batch
         else:
             if not get_default_context().is_mask_ready:
                 self.filters = [1,*[0 for a in range(areas - 1)]] * batch
@@ -283,17 +284,21 @@ def syntaxdealer(items,type,index): #type "unet=", "x=", "lwbe="
             return item.replace(type,"")
     return items[index] if "@" not in items[index] else 1
 
-def makefilters(c,h,w,masks,mode,usebase,bratios,indmask):
-    if indmask:
+def makefilters(c,h,w,masks,mode,usebase,bratios,is_mask:bool):
+    if is_mask:
         (regmasks, regbase) = masks
+        # if length of bratios[0] is shorter than regmasks, extend bratios[0] to match regmasks.
+        if len(bratios[0]) < len(regmasks):
+            bratios[0].extend([bratios[0][-1]] * (len(regmasks) - len(bratios[0])))
         
     filters = []
     x =  torch.zeros(c, h, w).to(devices.device)
     if usebase:
         x0 = torch.zeros(c, h, w).to(devices.device)
     i=0
-    if indmask:
+    if is_mask:
         ftrans = Resize((h, w), interpolation = InterpolationMode("nearest"))
+        print("Length of regmasks: ", len(regmasks), "Length of bratios[0]: ", len(bratios[0]))
         for rmask, bratio in zip(regmasks,bratios[0]):
             # Resize mask to current dims.
             # Since it's a mask, we prefer a binary value, nearest is the only option.

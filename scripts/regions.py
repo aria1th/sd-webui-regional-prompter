@@ -724,15 +724,13 @@ def detect_polygons(img,num, context:Optional[RegionsProcessingContext]=None):
     print("Region sketch size", skimg.shape)    
     return skimg, num + 1 if (num >= 0 and num + 1 <= CBLACK_CONSTANT) else num
 
-def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context:Optional[RegionsProcessingContext] = None):
+def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context:Optional[RegionsProcessingContext] = None) -> Optional[np.ndarray]:
     """Extract specific colour and return mask.
     
     Multiplier for correct display.
     Also tags colour in case someone uses the upload interface. 
     """
-    if context is None:
-        global CONTEXT
-        context = CONTEXT
+    context = get_region_context(context)
     if hasattr(img_input, "image"):
         img = img_input.image
     elif isinstance(img_input, dict) and "image" in img:
@@ -751,9 +749,11 @@ def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context:Optional[Regions
             color = color.reshape(1,1,*color.shape) # 1x1x3xn
             img = img.reshape(*img.shape,1) # Same.
             indnot = True
-    else:
+    elif num >= len(context['REGUSE']): # Invalid region.
         color = deterministic_colours(int(num) + 1)[-1]
         color = color.reshape([1,1,CCHANNELS_CONSTANT])
+    else: # Valid region.
+        color = np.array(context['REGUSE'][num]).reshape([1,1,CCHANNELS_CONSTANT])
     if indnot: # Negation of a list of regions.
         mask = (~(img == color)).all(-1).all(-1)
         mask = mask * mult
@@ -837,6 +837,8 @@ def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, con
             m = m.reshape([1, *m.shape]).astype(np.float16)
             t = torch.from_numpy(m).to(devices.device) 
             self.regmasks.append(t)
+        else:
+            print("Region {} is empty.".format(c))
     # First mask applies to all unmasked regions.
     if tm is None:
         # warn
