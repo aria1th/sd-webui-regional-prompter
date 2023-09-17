@@ -1,10 +1,13 @@
 import math
 from pprint import pprint
+from typing import Optional
 import ldm.modules.attention as ldm_attention_module
 import torch
 import torchvision
 import torchvision.transforms.functional as F
 from torchvision.transforms import InterpolationMode, Resize  # Mask.
+
+from scripts.contexts import PromptProcessingContext
 
 TOKENSCON = 77
 TOKENS = 75
@@ -96,7 +99,7 @@ def main_forward(module ,x, context, # vanilla args
 
     return out
 
-def hook_forwards(self, root_module: torch.nn.Module, remove=False, regional_prompt_context = None):
+def hook_forwards(self, root_module: torch.nn.Module, remove=False, regional_prompt_context:Optional[PromptProcessingContext] = None):
     self.hooked = True if not remove else False
     for name, module in root_module.named_modules():
         if "attn2" in name and module.__class__.__name__ == "CrossAttention":
@@ -107,7 +110,7 @@ def hook_forwards(self, root_module: torch.nn.Module, remove=False, regional_pro
 ################################################################################
 ##### Attention mode 
 
-def hook_forward(self, module, regional_prompt_context = None):
+def hook_forward(self, module, regional_prompt_context:Optional[PromptProcessingContext] = None):
     if regional_prompt_context is None:
         regional_prompt_context = PROMPT_CONTEXT
     def forward(x, context=None, mask=None, additional_tokens=None, n_times_crossframe_attn_in_self=0):
@@ -339,7 +342,7 @@ def hook_forward(self, module, regional_prompt_context = None):
             ox = ox.reshape(x.size()[0],x.size()[1],x.size()[2]) # Restore to 3d source.  
             return ox
 
-        def promptsepcalc(x, contexts, mask, pn,divide, regional_prompt_context = None):
+        def promptsepcalc(x, contexts, mask, pn,divide, regional_prompt_context:Optional[PromptProcessingContext] = None):
             if regional_prompt_context is None:
                 regional_prompt_context = PROMPT_CONTEXT
             h_states = []
@@ -508,25 +511,13 @@ def repeat_div(x,y):
 
 #################################################################################
 ##### for Prompt mode
-class PromptProcessingContext:
-    def __init__(self):
-        self.masks = []
-        self.masks_hw = []
-        self.masks_f = []
-        self.is_mask_ready = False
-        
-    def reset(self):
-        self.masks.clear()
-        self.masks_hw.clear()
-        self.masks_f.clear()
-        self.is_mask_ready = False
         
 PROMPT_CONTEXT = PromptProcessingContext()
         
 def get_default_context():
     return PROMPT_CONTEXT
 
-def reset_prompt_context(self, context = None): # init parameters in every batch
+def reset_prompt_context(self, context:Optional[PromptProcessingContext] = None): # init parameters in every batch
     if context is None:
         context = PROMPT_CONTEXT
     context.reset()
@@ -534,7 +525,7 @@ def reset_prompt_context(self, context = None): # init parameters in every batch
     self.x = None
     self.rebacked = False
 
-def save_prompt_context(self, processed, context = None): # save masks in every batch
+def save_prompt_context(self, processed, context:Optional[PromptProcessingContext] = None): # save masks in every batch
     if context is None:
         context = PROMPT_CONTEXT
     for mask ,th in zip(context.masks.values(),self.th):
@@ -542,7 +533,7 @@ def save_prompt_context(self, processed, context = None): # save masks in every 
         processed.images.append(img)
     return processed
 
-def hiresscaler(height, width, attn, context = None):
+def hiresscaler(height, width, attn, context:Optional[PromptProcessingContext] = None):
     """
     If masks_hw is not empty, resize masks to the largest height and width.
     """
@@ -572,7 +563,7 @@ def hiresmask(masks,oh,ow,nh,nw,at,i = None):
         else:
             masks[key][i] = mask
 
-def makepmask(mask, h, w, th, step, bratio = 1, context=None): # make masks from attention cache return [for preview, for attention, for Latent]
+def makepmask(mask, h, w, th, step, bratio = 1, context:Optional[PromptProcessingContext]=None): # make masks from attention cache return [for preview, for attention, for Latent]
     """
     Generate a mask then return it as triple.
     """

@@ -1,5 +1,6 @@
 # attaches API for returning detected color mask from image
-from scripts.regions import RegionsProcessingContext, FakeMaskDebugging, draw_image, inpaintmaskdealer
+from scripts.regions import draw_image, inpaintmaskdealer
+from scripts.contexts import RegionsProcessingContext, FakeMaskDebuggingContext
 
 def get_image_mask(image, usebase=False):
     """
@@ -7,7 +8,7 @@ def get_image_mask(image, usebase=False):
     """
     context = RegionsProcessingContext()
     polymask_image = draw_image(image, context)
-    debug_obj = FakeMaskDebugging()
+    debug_obj = FakeMaskDebuggingContext()
     # usebase : bool
     debug_obj.usebase = usebase
     inpaintmaskdealer(

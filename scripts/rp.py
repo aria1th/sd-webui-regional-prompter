@@ -28,8 +28,10 @@ from scripts.latent import (denoised_callback_s, denoiser_callback_s, lora_namer
 from scripts.regions import (MAXCOLREG_CONSTANT, IDIM_CONSTANT, KEYBRK, KEYBASE, KEYCOMM, KEYPROMPT, ALLKEYS, ALLALLKEYS,
                              create_canvas, draw_region, #detect_mask, detect_polygons,  
                              draw_image, save_mask, load_mask, changecs,
-                             floatdef, inpaintmaskdealer, makeimgtmp, matrixdealer)
+                             floatdef, inpaintmaskdealer, makeimgtmp, matrixdealer,
+                             get_region_context)
 from scripts.image_util import decode_data
+from scripts.contexts import RegionsProcessingContext, FakeMaskDebuggingContext
 
 FLJSON = "regional_prompter_presets.json"
 # Modules.basedir points to extension's dir. script_path or scripts.basedir points to root.
@@ -80,6 +82,7 @@ def ui_tab(mode, submode):
         # Need to add maketemp function based on base / common checks.
         vret = [mmode, ratios, maketemp, template, areasimg, flipper]
     elif mode == "Mask":
+        #context_state = gr.State(RegionsProcessingContext()) # State component to hold context.
         with gr.Row():
             xguide = gr.HTML(value = fhurl(MASKURL, "Inpaint+ mode guide"))
         with gr.Row(): # Creep: Placeholder, should probably make this invisible.
@@ -348,8 +351,10 @@ class Script(modules.scripts.Script):
     def process(self, p, active, debug, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
                 usebase, usecom, usencom, calcmode, nchangeand, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper):
         if type(polymask) == str:
+            # create new context
+            context = get_region_context()
             try:
-                polymask,_,_ = draw_image(decode_data(polymask))
+                polymask,_,_ = draw_image(decode_data(polymask), context=context) # this updates context in-place
             except Exception as e:
                 # if rp_selected_tab == "Mask", then it has to raise error.
                 if rp_selected_tab == "Mask":
@@ -425,7 +430,7 @@ class Script(modules.scripts.Script):
             ##### region mode
             if "Mask" in self.mode:
                 keyreplacer(p) #change all keys to BREAK
-                inpaintmaskdealer(self, p, bratios, usebase, polymask)
+                inpaintmaskdealer(self, p, bratios, usebase, polymask, context=get_region_context())
 
             elif any(x in self.mode for x in ["Ver","Hor","Ran"]):
                 matrixdealer(self, p, aratios, bratios, self.mode)

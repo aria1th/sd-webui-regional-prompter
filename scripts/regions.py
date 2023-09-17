@@ -5,8 +5,11 @@ import cv2  # Polygon regions.
 import gradio as gr
 import numpy as np
 import PIL
+from PIL import Image
 import torch
 from modules import devices
+
+from scripts.contexts import RegionsProcessingContext
 
 # SBM Keywords and delimiters for region breaks, following matlab rules.
 # BREAK keyword is now passed through,  
@@ -413,30 +416,17 @@ SBM mod: Mask polygon region.
 - Added -1 colour to clear sections, an eraser.
 """
 
-class RegionsProcessingContext:
-    def __init__(self):
-        self.state_dict = {
-            "COLREG": None, # Computed colour regions cache. Array. Extended whenever a new colour is requested.
-            "REGUSE": dict(), # Used regions. Reset on new canvas / upload (preset).
-            "VARIANT": 0, # Ensures that the sketch canvas is actually refreshed.
-            "INDCOLREPL": False,
-        }
-        
-    # set accessors
-    def __setitem__(self, key, value):
-        self.state_dict[key] = value
-        
-    # get accessors
-    def __getitem__(self, key):
-        return self.state_dict[key]
-    
-    # hint accessors
-    def keys_hint(self):
-        return ("COLREG","REGUSE","VARIANT","INDCOLREPL")
+
     
     
 #TODO : This global shared state is a mess. It prevents multiple instances and reusing functions for other purposes.
 CONTEXT = RegionsProcessingContext() # Global state for processing.
+
+def get_region_context(context:Optional[RegionsProcessingContext] = None):
+    if context is None:
+        return CONTEXT
+    return context
+
 # Permitted hsv error range for mask upload (due to compression).
 # Mind, wrong hue might throw off the mask entirely and is not corrected.
 # HSV_RANGE = (125,130)
@@ -529,7 +519,7 @@ def cleaned_detect_image_colours(img:Optional[np.ndarray]) -> Tuple[Optional[Uni
     pass
     
 
-def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context=None) -> Tuple[Optional[Union[np.ndarray, Dict[str,np.ndarray]]], None]:
+def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context:Optional[RegionsProcessingContext]=None) -> Tuple[Optional[Union[np.ndarray, Dict[str,np.ndarray]]], None]:
     """Detect relevant hsv colours in image and clean up the standard mask.
     It always return None as second value, wtf?
     """
@@ -545,9 +535,9 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     #and likely doesn't save much processing (heaviest op is get_colours for large image).
     #Creep: Apply erosion so thin regions are ignored. This would need be applied on processing as well.
     if context is None:
-        global CONTEXT
-        context = CONTEXT
+        context = get_region_context()
     if img is None: # Do nothing if no image passed. 
+        print("No image passed to detect_image_colours.")
         return None, None
     context['VARIANT'] = 0 # Upload doesn't need variance, it refreshes automatically.
     (h,w,c) = img.shape
@@ -600,7 +590,8 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     MAX_KEY_VALUE = len(unique_keys) + 20
     context['REGUSE'] = {reg[0,0]: reg[0,1:].tolist() for reg in regrows if len(reg) > 0 and reg[0,0] <= MAX_KEY_VALUE}
     # REGUSE.discard(COLWHITE)
-    
+    # print
+    context.debug()
     # Must set to dict due to gradio preprocess assertion, in preset load.
     # CONT: This doesn't work. Postprocess expects image. Maybe use dict for preset, not upload.
     if inddict:
@@ -608,7 +599,7 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     
     return img, None # Clears the upload area. A bit cleaner.
 
-def save_mask(img, flpath, context = None):
+def save_mask(img, flpath, context:Optional[RegionsProcessingContext] = None):
     """Save mask to file.
     
     These will be loaded as part of a preset.
@@ -639,14 +630,13 @@ def load_mask(flpath):
         img = None
     return img
 
-def detect_polygons(img,num, context:None):
+def detect_polygons(img,num, context:Optional[RegionsProcessingContext]=None):
     """Convert stroke + region to standard coloured mask.
     
     Negative colours will clear the mask instead, and not ++.
     """
     if context is None:
-        global CONTEXT
-        context = CONTEXT
+        context = get_region_context()
 
     # I dunno why, but mask has a 4th colour channel, which contains nothing. Alpha?
     if context['VARIANT'] != 0:
@@ -702,7 +692,7 @@ def detect_polygons(img,num, context:None):
     print("Region sketch size", skimg.shape)    
     return skimg, num + 1 if (num >= 0 and num + 1 <= CBLACK_CONSTANT) else num
 
-def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context = None):
+def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context:Optional[RegionsProcessingContext] = None):
     """Extract specific colour and return mask.
     
     Multiplier for correct display.
@@ -741,7 +731,7 @@ def detect_mask(img_input, num, mult = CBLACK_CONSTANT, context = None):
         context['REGUSE'][num] = color.reshape(-1).tolist()
     return mask
 
-def draw_region(img, num,context = None):
+def draw_region(img:Image.Image, num: int,context:Optional[RegionsProcessingContext] = None):
     """Simply runs polygon detection, followed by mask on result.
     
     Saves extra inconvenient button. Since num is auto incremented, we take the old val.
@@ -754,7 +744,7 @@ def draw_region(img, num,context = None):
     dimg = img
     return dimg, num2, mask
 
-def draw_image(img_input, inddict = False, context = None):
+def draw_image(img_input, inddict = False, context:Optional[RegionsProcessingContext] = None):
     """Runs colour detection followed by mask on -1 to show which colours are regions.
     
     """
@@ -763,7 +753,7 @@ def draw_image(img_input, inddict = False, context = None):
     dimg = img # but wtf is this
     return dimg, clearer, mask
 
-def create_canvas(h, w, indwipe = True, context = None):
+def create_canvas(h, w, indwipe = True, context:Optional[RegionsProcessingContext] = None):
     """New region sketch area.
     
     Small variant value is added (and ignored later) due to gradio refresh bug.
@@ -777,21 +767,11 @@ def create_canvas(h, w, indwipe = True, context = None):
         context['REGUSE'] = dict()
     vret =  np.zeros(shape = (h + context['VARIANT'], w + context['VARIANT'], CCHANNELS_CONSTANT), dtype = np.uint8) + CBLACK_CONSTANT
     return vret
-
-class FakeMaskDebugging:
-    """
-    Fake object for debugging.
-    """
-    def __init__(self) -> None:
-        self.debug = False
-        self.regmasks = []
-        self.usebase = False
-        self.regbase = None
         
 # SBM In mask mode, grabs each mask from coloured mask image.
 # If there's no base, remainder goes to first mask.
 # If there's a base, it will receive its own remainder mask, applied at 100%.
-def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, context = None):
+def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, context:Optional[RegionsProcessingContext] = None):
     """
     wtf is this in-place operation... 
     After draw_image, polymask is used here.
@@ -826,6 +806,10 @@ def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, con
             t = torch.from_numpy(m).to(devices.device) 
             self.regmasks.append(t)
     # First mask applies to all unmasked regions.
+    if tm is None:
+        # warn
+        print("No regions detected, maybe it is not a mask?")
+        tm = np.zeros_like(m)
     m = 1 - tm
     m = m.reshape([1, *m.shape]).astype(np.float16)
     t = torch.from_numpy(m).to(devices.device)
