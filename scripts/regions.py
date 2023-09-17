@@ -519,6 +519,7 @@ def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
     """
     Reduces colors in the image, with error thresholding.
     For each colors, if pixel count with color is less then 5% of total pixels, it is removed.
+    All black pixels are replaced with white for compatibility with the mask.
     """
     if img is None:
         return None
@@ -532,7 +533,7 @@ def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
     
     # finally, replace black or close-to-black pixels with white
     copied_image[(copied_image < 10).all(axis=-1)] = COLWHITE_CONSTANT
-    print("Unique colours after denoise: {}".format(len(np.unique(copied_image.reshape(-1, copied_image.shape[-1]), axis=0))))
+    # print("Unique colours after denoise: {}".format(len(np.unique(copied_image.reshape(-1, copied_image.shape[-1]), axis=0))))
     return copied_image
     
 
@@ -563,12 +564,18 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     # Get unique colours, create rgb-hsv mapping and filtering.
     # hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     # skimg = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2RGB)
-    lrgb = get_colours(img)
-    lhsv = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = lrgb / CBLACK_CONSTANT)
-    msk = ((lhsv[:,1] >= HSV_RANGE_CONSTANT[0]) & (lhsv[:,1] <= HSV_RANGE_CONSTANT[1]) &
-           (lhsv[:,2] >= HSV_RANGE_CONSTANT[0]) & (lhsv[:,2] <= HSV_RANGE_CONSTANT[1]))
-    lfltrgb = lrgb[msk]
-    lflthsv = lhsv[msk]
+    rgb_colors_list = get_colours(img)
+    print("Unique colours: {}".format(len(rgb_colors_list)))
+    hsv_colors_list = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = rgb_colors_list / CBLACK_CONSTANT) # Convert to hsv.
+    # if there are too many colors, based on HSV_RANGE_CONSTANT(0.49, 0.51), we will only select the colors with saturation and value between 0.49 and 0.51.
+    # check if 10+ colors are there.
+    if len(hsv_colors_list) > 10:
+        msk = ((hsv_colors_list[:,1] >= HSV_RANGE_CONSTANT[0]) & (hsv_colors_list[:,1] <= HSV_RANGE_CONSTANT[1]) &
+            (hsv_colors_list[:,2] >= HSV_RANGE_CONSTANT[0]) & (hsv_colors_list[:,2] <= HSV_RANGE_CONSTANT[1])) 
+    else:
+        msk = np.ones(len(hsv_colors_list), dtype=bool)
+    lfltrgb = rgb_colors_list[msk]
+    lflthsv = hsv_colors_list[msk]
     lflthsv[:,1:] = HSV_VAL_CONSTANT
     if len(lfltrgb) > 0:
         lfltfix = np.apply_along_axis(lambda x: colorsys.hsv_to_rgb(*x), axis=-1, arr=lflthsv)
@@ -595,7 +602,12 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     # Gen all colours, match with the fixed filtered list.
     # I can think of no mathematical function to inverse the colour gen function.
     # Also, imperfect hash, so ~60 colours go over the edge. Should have 100% matches at x2. 
-    context['COLREG'] = deterministic_colours(2 * MAXCOLREG_CONSTANT, context['COLREG'])
+    deterministic = False
+    if deterministic:
+        context['COLREG'] = deterministic_colours(2 * MAXCOLREG_CONSTANT, context['COLREG'])
+    else:
+        # use the unique colors from the image as the base colors
+        context['COLREG'] = lfltfix
     cow = index_rows(context['COLREG'])
     regrows = [cow[(context['COLREG'] == f).all(axis = 1)] for f in lfltfix]
     # MAX_KEY_VALUE provides a threshold value. Only those colors are added to REGUSE, for which the key values 
@@ -607,6 +619,7 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     # By setting an appropriate MAX_KEY_VALUE, these minor color differences can be effectively filtered out, 
     # thereby reducing the number of colors being processed and making color processing more accurate and efficient.
     MAX_KEY_VALUE = len(unique_keys) + 20
+    # filter out colors with indices greater than MAX_KEY_VALUE
     context['REGUSE'] = {reg[0,0]: reg[0,1:].tolist() for reg in regrows if len(reg) > 0 and reg[0,0] <= MAX_KEY_VALUE}
     # REGUSE.discard(COLWHITE)
     # print

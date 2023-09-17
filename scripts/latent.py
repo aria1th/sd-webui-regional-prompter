@@ -10,7 +10,7 @@ from modules.script_callbacks import CFGDenoisedParams, CFGDenoiserParams
 from torchvision.transforms import InterpolationMode, Resize  # Mask.
 import scripts.attention as att
 from scripts.regions import floatdef
-from scripts.attention import makerrandman
+from scripts.attention import makerrandman, get_default_context
 
 islora = True
 in_hr = False
@@ -18,7 +18,7 @@ layer_name = "lora_layer_name"
 orig_Linear_forward = None
 orig_lora_functional = False
 lactive = False
-labug =False
+latent_debug =False
 MINID = 1000
 MAXID = 10000
 LORAID = MINID # Discriminator for repeated lora usage / across gens, presumably.
@@ -50,9 +50,9 @@ def setloradevice(self):
                 ctl.lora_weights[new] = ctl.lora_weights[old]
 
 def setuploras(self):
-    global lactive, labug, islora, orig_Linear_forward, orig_lora_functional, layer_name
+    global lactive, latent_debug, islora, orig_Linear_forward, orig_lora_functional, layer_name
     lactive = True
-    labug = self.debug
+    latent_debug = self.debug
     islora = self.isbefore15
     layer_name = self.layer_name
     orig_lora_functional = shared.opts.lora_functional
@@ -96,8 +96,8 @@ def denoiser_callback_s(self, params: CFGDenoiserParams):
         self.pfirst = True
 
         lim = 1 if self.isxl else 3
-
-        if len(att.pmaskshw) > lim:
+        attention_context = get_default_context()
+        if len(attention_context.masks_hw) > lim:
             if "La" in self.calc:
                 self.filters = []
                 for b in range(self.batch_size):
@@ -106,7 +106,7 @@ def denoiser_callback_s(self, params: CFGDenoiserParams):
                     basemask = None
                     for t, th, bratio in zip(self.pe, self.th, self.bratios):
                         key = f"{t}-{b}"
-                        _, _, mask = att.makepmask(att.pmasks[key], params.x.shape[2], params.x.shape[3], th, self.step, bratio = bratio)
+                        _, _, mask = att.makepmask(attention_context.masks[key], params.x.shape[2], params.x.shape[3], th, self.step, bratio = bratio)
                         mask = mask.repeat(params.x.shape[1],1,1)
                         basemask = 1 - mask if basemask is None else basemask - mask
                         if self.ex:
@@ -121,20 +121,20 @@ def denoiser_callback_s(self, params: CFGDenoiserParams):
                     basemask = torch.where(basemask > 0, 1, 0)
                     allmask.insert(0,basemask)
                     self.filters.extend(allmask)
-                att.maskready = True
+                attention_context.is_mask_ready = True
             else:    
                 for t, th, bratio in zip(self.pe, self.th, self.bratios):
                     allmask = []
-                    for hw in att.pmaskshw:
+                    for hw in attention_context.masks_hw:
                         masks = None
                         for b in range(self.batch_size):
                             key = f"{t}-{b}"
-                            _, mask, _ = att.makepmask(att.pmasks[key], hw[0], hw[1], th, self.step, bratio = bratio)
+                            _, mask, _ = att.makepmask(attention_context.masks[key], hw[0], hw[1], th, self.step, bratio = bratio)
                             mask = mask.unsqueeze(0).unsqueeze(-1)
                             masks = mask if b ==0 else torch.cat((masks,mask),dim=0)
                         allmask.append(mask)     
-                    att.pmasksf[key] = allmask
-                    att.maskready = True
+                    attention_context.masks_f[key] = allmask
+                    attention_context.is_mask_ready = True
 
             if not self.rebacked: 
                 cloneparams(self,params)
@@ -190,7 +190,7 @@ def denoised_callback_s(self, params: CFGDenoisedParams):
             indrebuild = self.filters == [] or self.filters[0].size() != x[0].size()
 
             if indrebuild:
-                if "Ran" in self.mode:
+                if "Ran" in self.mode: # Random
                     if self.filters == []:
                         self.filters = [self.ranbase] + self.ransors if self.usebase else self.ransors
                     elif self.filters[0][:,:].size() != x[0,0,:,:].size():
@@ -200,14 +200,16 @@ def denoised_callback_s(self, params: CFGDenoisedParams):
                         masks = (self.regmasks,self.regbase)
                     else:
                         masks = self.aratios  #makefilters(c,h,w,masks,mode,usebase,bratios,indmask = None)
-                    self.filters = makefilters(x.shape[1], x.shape[2], x.shape[3],masks, self.mode, self.usebase, self.bratios, "Mas" in self.mode)
+                    self.filters = makefilters(x.shape[1], x.shape[2], x.shape[3],masks, self.mode, self.usebase, self.bratios, indmask="Mask" in self.mode)
                 self.filters = [f for f in self.filters]*batch
         else:
-            if not att.maskready:
+            if not get_default_context().is_mask_ready:
                 self.filters = [1,*[0 for a in range(areas - 1)]] * batch
 
         if self.debug : print("filterlength : ",len(self.filters))
-
+        # assert IndexError is not raised
+        if len(self.filters) < areas * batch:
+            print(f"Filter length is too short for areas {areas} and batch {batch}, got {len(self.filters)}")
         for b in range(batch):
             for a in range(areas) :
                 fil = self.filters[a + b*areas]
@@ -329,7 +331,7 @@ def makefilters(c,h,w,masks,mode,usebase,bratios,indmask):
                 filters.append(fx)
                 i +=1
     if usebase : filters.insert(0,x0)
-    if labug : print(i,len(filters))
+    if latent_debug : print(i,len(filters))
 
     return filters
 
@@ -419,7 +421,7 @@ class LoRARegioner:
             lora.loaded_loras[i].te_multiplier = self.mlist[lorakey]
 
     def u_start(self):
-        if labug : print("u_count",self.u_count ,"u_count '%' divide",  self.u_count % len(self.u_llist))
+        if latent_debug : print("u_count",self.u_count ,"u_count '%' divide",  self.u_count % len(self.u_llist))
         self.mlist = self.u_llist[self.u_count % len(self.u_llist)]
         self.u_count  += 1
 
@@ -430,19 +432,19 @@ class LoRARegioner:
             lorakey = self.search_key(lora,i,self.mlist)
             lora.loaded_loras[i].multiplier = 0 if self.step + 2 > stopstep and stopstep else self.mlist[lorakey]
             lora.loaded_loras[i].unet_multiplier = 0 if self.step + 2 > stopstep and stopstep else self.mlist[lorakey]
-            if labug :print(lorakey,lora.loaded_loras[i].multiplier,lora.loaded_loras[i].multiplier ) 
+            if latent_debug :print(lorakey,lora.loaded_loras[i].multiplier,lora.loaded_loras[i].multiplier ) 
             if self.ctl:
                 import lora_ctl_network as ctl
                 key = "hrunet" if in_hr else "unet"
                 if self.mlist[lorakey] == 0 or (self.step + 2 > stopstep and stopstep):
                     ctl.lora_weights[lorakey][key] = [[0],[0]]
-                    if labug :print(ctl.lora_weights[lorakey])
+                    if latent_debug :print(ctl.lora_weights[lorakey])
                 else:
                     if key in self.ctlweight[lorakey].keys():
                         ctl.lora_weights[lorakey][key] = self.ctlweight[lorakey][key]
                     else:
                         ctl.lora_weights[lorakey][key] = self.ctlweight[lorakey]["unet"]
-                    if labug :print(ctl.lora_weights[lorakey])
+                    if latent_debug :print(ctl.lora_weights[lorakey])
 
     def reset(self):
         self.te_count = 0
@@ -523,8 +525,8 @@ def restoremodel(p):
                 module.lora_current_names = None
 
 def unloadlorafowards(p):
-    global orig_Linear_forward, lactive, labug
-    lactive = labug = False
+    global orig_Linear_forward, lactive, latent_debug
+    lactive = latent_debug = False
     shared.opts.lora_functional =  orig_lora_functional
 
     import lora
