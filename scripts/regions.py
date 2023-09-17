@@ -515,9 +515,27 @@ def index_rows(mat):
     """
     return np.concatenate([np.arange(len(mat)).reshape(-1,1),mat],axis = 1)
 
-def cleaned_detect_image_colours(img:Optional[np.ndarray]) -> Tuple[Optional[Union[np.ndarray, Dict[str,np.ndarray]]]]:
-    pass
+def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """
+    Reduces colors in the image, with error thresholding.
+    For each colors, if pixel count with color is less then 5% of total pixels, it is removed.
+    """
+    if img is None:
+        return None
+    copied_image = img.copy()
+    colors_with_counts = np.unique(img.reshape(-1, img.shape[-1]), axis=0, return_counts=True)
+    total_pixels = img.shape[0] * img.shape[1]
+    colors_to_remove = colors_with_counts[0][colors_with_counts[1] < total_pixels * 0.05]
+    # process
+    for color in colors_to_remove:
+        copied_image[(copied_image == color).all(axis=-1)] = COLWHITE_CONSTANT
     
+    # finally, replace black or close-to-black pixels with white
+    copied_image[(copied_image < 10).all(axis=-1)] = COLWHITE_CONSTANT
+    print("Unique colours after denoise: {}".format(len(np.unique(copied_image.reshape(-1, copied_image.shape[-1]), axis=0))))
+    return copied_image
+    
+
 
 def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context:Optional[RegionsProcessingContext]=None) -> Tuple[Optional[Union[np.ndarray, Dict[str,np.ndarray]]], None]:
     """Detect relevant hsv colours in image and clean up the standard mask.
@@ -540,6 +558,7 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
         print("No image passed to detect_image_colours.")
         return None, None
     context['VARIANT'] = 0 # Upload doesn't need variance, it refreshes automatically.
+    img = denoise_image(img) # Reduce colours, remove noise.
     (h,w,c) = img.shape
     # Get unique colours, create rgb-hsv mapping and filtering.
     # hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
