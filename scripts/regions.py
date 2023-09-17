@@ -532,7 +532,7 @@ def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
         copied_image[(copied_image == color).all(axis=-1)] = COLWHITE_CONSTANT
     
     # finally, replace black or close-to-black pixels with white
-    copied_image[(copied_image < 10).all(axis=-1)] = COLWHITE_CONSTANT
+    #copied_image[(copied_image < 10).all(axis=-1)] = COLWHITE_CONSTANT
     # print("Unique colours after denoise: {}".format(len(np.unique(copied_image.reshape(-1, copied_image.shape[-1]), axis=0))))
     return copied_image
     
