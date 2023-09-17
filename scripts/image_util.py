@@ -1,4 +1,5 @@
 import base64
+from io import BytesIO
 import os
 import gzip
 import json
@@ -40,18 +41,26 @@ def decode_data(data:str):
             bytes_data = base64.b64decode(data)
         except:
             raise ValueError("Could not decode as base64 data")
+    else:
+        # find invalid characters
+        invalid_chars = re.findall(r"[^A-Za-z0-9+/=]", data)
+        if invalid_chars:
+            raise ValueError("Invalid characters found in data: {}".format(invalid_chars))
+    assert isinstance(bytes_data, bytes), "Expected bytes data, got {}".format(type(bytes_data))
     # check if data is gzip compressed
     if is_compressed(bytes_data):
         # try to decompress
         try:
-            data = gzip.decompress(bytes_data)
+            bytes_data = gzip.decompress(bytes_data)
         except:
             raise ValueError("Could not decompress as gzip data")
     # try to load as numpy array
     try:
-        image = Image.open(data)
+        bytesIO = BytesIO(bytes_data)
+        image_arr = np.array(Image.open(bytesIO))
+        image = Image.fromarray(image_arr)
+        # remove alpha channel and convert to RGB
         if image.mode == "RGBA":
-            # convert to RGB
             image = image.convert("RGB")
         return np.array(image)
     except:
