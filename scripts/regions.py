@@ -518,7 +518,7 @@ def index_rows(mat):
 def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
     """
     Reduces colors in the image, with error thresholding.
-    For each colors, if pixel count with color is less then 5% of total pixels, it is removed.
+    For each colors, if pixel count with color is less then 2% of total pixels, it is removed.
     All black pixels are replaced with white for compatibility with the mask.
     """
     if img is None:
@@ -526,10 +526,11 @@ def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
     copied_image = img.copy()
     colors_with_counts = np.unique(img.reshape(-1, img.shape[-1]), axis=0, return_counts=True)
     total_pixels = img.shape[0] * img.shape[1]
-    colors_to_remove = colors_with_counts[0][colors_with_counts[1] < total_pixels * 0.05]
+    colors_to_remove = colors_with_counts[0][colors_with_counts[1] < total_pixels * 0.02]
     # process
+    most_dominant_color = colors_with_counts[0][np.argmax(colors_with_counts[1])]
     for color in colors_to_remove:
-        copied_image[(copied_image == color).all(axis=-1)] = COLWHITE_CONSTANT
+        copied_image[(copied_image == color).all(axis=-1)] = most_dominant_color
     
     # finally, replace black or close-to-black pixels with white
     #copied_image[(copied_image < 10).all(axis=-1)] = COLWHITE_CONSTANT
@@ -565,6 +566,7 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     # hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     # skimg = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2RGB)
     rgb_colors_list = get_colours(img)
+    print("colors_list: {}".format(rgb_colors_list))
     print("Unique colours: {}".format(len(rgb_colors_list)))
     hsv_colors_list = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = rgb_colors_list / CBLACK_CONSTANT) # Convert to hsv.
     # if there are too many colors, based on HSV_RANGE_CONSTANT(0.49, 0.51), we will only select the colors with saturation and value between 0.49 and 0.51.
@@ -818,6 +820,13 @@ def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, con
     if self.debug: print("in inpaintmaskdealer",prompt)
     if KEYCOMM in prompt: prompt = prompt.split(KEYCOMM,1)[1]
     if KEYBASE in prompt: prompt = prompt.split(KEYBASE,1)[1]
+    breaks = prompt.count(KEYBRK)
+    self.bratios = split_l2(bratios, DELIMROW, DELIMCOL, fmap = ffloatd(0),
+                            basestruct = [[0] * (breaks + 1)], indflip = False)
+    # check if the number of breaks is equal to the number of ratios, if there was no base and prompts were one more than the context['REGUSE'], then usebase should be true
+    if len(context['REGUSE']) == breaks:
+        self.usebase = True
+        print("Warn : there were more than expected number of prompts, so usebase is set to True")
     # Prep masks.
     self.regmasks = []
     tm = None
@@ -844,19 +853,17 @@ def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, con
         # warn
         print("No regions detected, maybe it is not a mask?")
         tm = np.zeros_like(m)
-    m = 1 - tm
+    m = 1 - tm # Invert, it is unmasked regions.
     m = m.reshape([1, *m.shape]).astype(np.float16)
     t = torch.from_numpy(m).to(devices.device)
+    # Simulated region anchroing for base weights.
     if self.usebase:
         self.regbase = t
     else:
         self.regbase = None
         self.regmasks[0] = t
     
-    # Simulated region anchroing for base weights.
-    breaks = prompt.count(KEYBRK)
-    self.bratios = split_l2(bratios, DELIMROW, DELIMCOL, fmap = ffloatd(0),
-                            basestruct = [[0] * (breaks + 1)], indflip = False)
+    
 
 def randdealer(self,p,aratios,bratios):
     # h*w の大きさのテンソルを作成
