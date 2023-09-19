@@ -211,6 +211,7 @@ def denoised_callback_s(self, params: CFGDenoisedParams):
         # assert IndexError is not raised
         if len(self.filters) < areas * batch:
             print(f"Filter length is too short for areas {areas} and batch {batch}, got {len(self.filters)}")
+            print(f"mode : {self.mode}, usebase : {self.usebase}, bratios : {self.bratios}")
         for b in range(batch):
             for a in range(areas) :
                 fil = self.filters[a + b*areas]

@@ -1,4 +1,6 @@
 import os.path
+import base64
+import gzip
 from importlib import reload
 import launch
 from pprint import pprint
@@ -88,8 +90,8 @@ def ui_tab(mode, submode):
         with gr.Row(): # Creep: Placeholder, should probably make this invisible.
             xmode = gr.Radio(label="Mask mode", choices=submode, value="Mask", type="value", interactive=True)
         with gr.Row(): # CREEP: Css magic to make the canvas bigger? I think it's in style.css: #img2maskimg -> height.
-            polymask = gr.Image(label = "Do not upload here until bugfix",elem_id="polymask",
-                                source = "upload", mirror_webcam = False, type = "numpy", tool = "sketch")#.style(height=480)
+            polymask = gr.Image(label = "Do not upload here until bugfix",elem_id="polymask", interactive=True,
+                                source = "upload", mirror_webcam = False, type = "numpy", tool = "sketch", height=480)#.style(height=480)
         with gr.Row():
             with gr.Column():
                 num = gr.Slider(label="Region", minimum=-1, maximum=MAXCOLREG_CONSTANT, step=1, value=1)
@@ -120,6 +122,15 @@ def ui_tab(mode, submode):
         vret = [pmode, threshold]
 
     return vret
+
+def encode_base64(image):
+    """
+    Standard expected input for Gradio image components.
+    """
+    if image is None:
+        return None
+    return base64.b64encode(gzip.compress(image)).decode('ascii')
+
             
 # modes, submodes. Order must be maintained so dict is inadequate. Must have submode for component consistency.
 RPMODES = [
@@ -249,10 +260,10 @@ class Script(modules.scripts.Script):
                 usebase = gr.Checkbox(value=False, label="Use base prompt",interactive=True, elem_id="RP_usebase")
                 usecom = gr.Checkbox(value=False, label="Use common prompt",interactive=True,elem_id="RP_usecommon")
                 usencom = gr.Checkbox(value=False, label="Use common negative prompt",interactive=True,elem_id="RP_usecommon")
-            
+            with gr.Row():
+                rp_selected_tab = gr.Dropdown(label="Mode", choices=['Matrix', 'Mask', 'Prompt'], interactive=True, elem_id="RP_selected_tab")
             # Tabbed modes.
             with gr.Tabs(elem_id="RP_mode") as tabs:
-                rp_selected_tab = gr.State("Matrix") # State component to document current tab for gen.
                 # ltabs = []
                 ltabp = []
                 for (i, (md,smd)) in enumerate(RPMODES):
@@ -350,6 +361,10 @@ class Script(modules.scripts.Script):
 
     def process(self, p, active, debug, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
                 usebase, usecom, usencom, calcmode, nchangeand, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper):
+        # rp_selected_tab is index, convert to mode.
+        if rp_selected_tab == "Mask":
+            self.mode = "Mask"
+        print(f"rp_selected_tab : {rp_selected_tab}, self.mode : {self.mode}")
         if type(polymask) == str:
             # create new context
             context = get_region_context()
@@ -360,6 +375,14 @@ class Script(modules.scripts.Script):
                 if rp_selected_tab == "Mask":
                     raise Exception("Mask mode requires mask image.", e)
                 pass
+        elif self.mode == "Mask" and polymask is not None: # image is uploaded, reprocess
+            if not isinstance(polymask, np.ndarray):
+                f"polymask is not np.ndarray, type(polymask)={type(polymask)}, value={polymask}"
+            print("Reprocessing uploaded mask image.")
+            context = get_region_context()
+            polymask,_,_ = draw_image(polymask, context=context) # this updates context in-place
+        else:
+            print(f"Mode : {self.mode}, polymask : {polymask}")
 
         if debug: pprint([active, debug, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
                 usebase, usecom, usencom, calcmode, nchangeand, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper])

@@ -521,6 +521,8 @@ def denoise_image(img:Optional[np.ndarray]) -> Optional[np.ndarray]:
     For each colors, if pixel count with color is less then 2% of total pixels, it is removed.
     All black pixels are replaced with white for compatibility with the mask.
     """
+    if isinstance(img, dict):
+        img = img.get('image', None)
     if img is None:
         return None
     copied_image = img.copy()
