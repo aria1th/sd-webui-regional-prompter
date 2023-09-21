@@ -1,6 +1,6 @@
 import colorsys  # Polygon regions.
 from pprint import pprint
-from typing import Optional, Tuple, Union, Dict
+from typing import List, Optional, Tuple, Union, Dict
 import cv2  # Polygon regions.
 import gradio as gr
 import numpy as np
@@ -572,6 +572,7 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     print("Unique colours: {}".format(len(rgb_colors_list)))
     hsv_colors_list = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = rgb_colors_list / CBLACK_CONSTANT) # Convert to hsv.
     # if there are too many colors, based on HSV_RANGE_CONSTANT(0.49, 0.51), we will only select the colors with saturation and value between 0.49 and 0.51.
+    print("hsv_colors_list: {}".format(hsv_colors_list))
     # check if 10+ colors are there.
     if len(hsv_colors_list) > 10:
         msk = ((hsv_colors_list[:,1] >= HSV_RANGE_CONSTANT[0]) & (hsv_colors_list[:,1] <= HSV_RANGE_CONSTANT[1]) &
@@ -582,10 +583,19 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
     lflthsv = hsv_colors_list[msk]
     lflthsv[:,1:] = HSV_VAL_CONSTANT
     if len(lfltrgb) > 0:
-        lfltfix = np.apply_along_axis(lambda x: colorsys.hsv_to_rgb(*x), axis=-1, arr=lflthsv)
-        lfltfix = (lfltfix * (CBLACK_CONSTANT + 1)).astype(np.uint8)
+        color_black_index = -1
+        # if black is present, then first color should be replaced as black (0,0,0)
+        if lfltrgb[0].tolist() == [0,0,0]:
+            color_black_index = 0
+        lfltfix = np.apply_along_axis(
+            lambda x: colorsys.hsv_to_rgb(*x), axis=-1, arr=lflthsv # black should be (0,0,0)
+            )
+        lfltfix = (lfltfix * (CBLACK_CONSTANT + 1)).astype(np.uint8) # Convert to colour uints.
+        if color_black_index != -1:
+            lfltfix[color_black_index] = [0,0,0] # black should be (0,0,0)
     else: # No relevant colours.
         lfltfix = lfltrgb
+    print("lfltfix: {}".format(lfltfix))
     # Mask update each colour in the image.
     # I tried to use isin, but it seems to detect any permutation.
     # It's better to roll colour channel to the front, add extra fake dims,
@@ -830,7 +840,7 @@ def inpaintmaskdealer(self, processing_pipeline, bratios, usebase, polymask, con
         self.usebase = True
         print("Warn : there were more than expected number of prompts, so usebase is set to True")
     # Prep masks.
-    self.regmasks = []
+    self.regmasks:List[torch.Tensor] = []
     tm = None
     # Sort colour dict by key, return value for masking.
     #for _,c in sorted(REGUSE.items(), key = lambda x: x[0]):

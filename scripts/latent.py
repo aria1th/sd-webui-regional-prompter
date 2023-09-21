@@ -197,6 +197,11 @@ def denoised_callback_s(self, params: CFGDenoisedParams):
                         self.filters = hrchange(self.ransors,x.shape[2], x.shape[3])
                 else:
                     if "Mask" in self.mode:
+                        assert isinstance(self.regmasks, list), "regmasks must be a list" # regmasks is defined in regions.py inpaintmaskdealer function
+                        # each mask is a tensor of shape [H, W]
+                        assert all([isinstance(mask, torch.Tensor) for mask in self.regmasks]), "regmasks must be a list of tensors, found non-tensor element"
+                        # regbase is either None or a tensor of shape [H, W]
+                        assert self.regbase is None or isinstance(self.regbase, torch.Tensor), f"regbase must be None or a tensor, found {type(self.regbase)}"
                         masks = (self.regmasks,self.regbase)
                     else:
                         masks = self.aratios  #makefilters(c,h,w,masks,mode,usebase,bratios,is_mask = None)
@@ -285,9 +290,22 @@ def syntaxdealer(items,type,index): #type "unet=", "x=", "lwbe="
             return item.replace(type,"")
     return items[index] if "@" not in items[index] else 1
 
-def makefilters(c,h,w,masks,mode,usebase,bratios,is_mask:bool):
+def makefilters(c:int,h:int,w:int,masks:list,mode:str,usebase:bool,bratios:list,is_mask:bool):
+    """
+    Generate filters from masks.
+    @Arguments:
+        c: int - number of channels.
+        h: int - height of image.
+        w: int - width of image.
+        masks: list - list of masks.
+        mode: str - mode of mask generation, can be 'Horizontal', 'Vertical', 'Random', 'Mask'.
+        usebase: bool - whether to use base.
+        bratios: list - list of base ratios.
+        is_mask: bool - whether to use masks.
+    @returns: list - list of filters.
+    """
     if is_mask:
-        (regmasks, regbase) = masks
+        (regmasks, regbase) = masks # Unpack masks.
         # if length of bratios[0] is shorter than regmasks, extend bratios[0] to match regmasks.
         if len(bratios[0]) < len(regmasks):
             bratios[0].extend([bratios[0][-1]] * (len(regmasks) - len(bratios[0])))

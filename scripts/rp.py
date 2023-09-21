@@ -32,7 +32,7 @@ from scripts.regions import (MAXCOLREG_CONSTANT, IDIM_CONSTANT, KEYBRK, KEYBASE,
                              draw_image, save_mask, load_mask, changecs,
                              floatdef, inpaintmaskdealer, makeimgtmp, matrixdealer,
                              get_region_context)
-from scripts.image_util import decode_data
+from scripts.image_util import (decode_data, resize_image)
 from scripts.contexts import RegionsProcessingContext, FakeMaskDebuggingContext
 
 FLJSON = "regional_prompter_presets.json"
@@ -369,7 +369,7 @@ class Script(modules.scripts.Script):
             # create new context
             context = get_region_context()
             try:
-                polymask,_,_ = draw_image(resize_image(decode_data(polymask), context=context)) # this updates context in-place
+                polymask,_,_ = draw_image(resize_image(decode_data(polymask)), context=context) # this updates context in-place
             except Exception as e:
                 # if rp_selected_tab == "Mask", then it has to raise error.
                 if rp_selected_tab == "Mask":
