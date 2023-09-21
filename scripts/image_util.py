@@ -16,6 +16,19 @@ def encode_image(image):
         return None
     return base64.b64encode(gzip.compress(image)).decode('ascii')
 
+def resize_image(image : np.ndarray, max_size=768):
+    """
+    Resize image to max size of 768.
+    """
+    # get ratio and resize
+    # skip if image is already smaller than max size
+    if max(image.shape) <= max_size:
+        return image
+    ratio = max_size / max(image.shape)
+    image = Image.fromarray(image)
+    image = image.resize((int(image.width * ratio), int(image.height * ratio)))
+    return np.array(image)
+
 def decode_data(data:str):
     """
     Standard expected output for Gradio image components.

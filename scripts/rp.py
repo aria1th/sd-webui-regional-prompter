@@ -369,7 +369,7 @@ class Script(modules.scripts.Script):
             # create new context
             context = get_region_context()
             try:
-                polymask,_,_ = draw_image(decode_data(polymask), context=context) # this updates context in-place
+                polymask,_,_ = draw_image(resize_image(decode_data(polymask), context=context)) # this updates context in-place
             except Exception as e:
                 # if rp_selected_tab == "Mask", then it has to raise error.
                 if rp_selected_tab == "Mask":
@@ -380,7 +380,7 @@ class Script(modules.scripts.Script):
                 f"polymask is not np.ndarray, type(polymask)={type(polymask)}, value={polymask}"
             print("Reprocessing uploaded mask image.")
             context = get_region_context()
-            polymask,_,_ = draw_image(polymask, context=context) # this updates context in-place
+            polymask,_,_ = draw_image(resize_image(polymask), context=context) # this updates context in-place
         else:
             print(f"Mode : {self.mode}, polymask : {polymask}")
 
