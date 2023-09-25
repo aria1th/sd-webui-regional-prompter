@@ -448,8 +448,11 @@ COLWHITE_CONSTANT = (255,255,255)
 
 def get_colours(img):
     """List colours used in image (as nxc array).
-    
+        Exclude black (0,0,0)
     """
+    # check if black is in the image
+    if (img == 0).all(axis=-1).any():
+        return np.unique(img.reshape(-1, img.shape[-1]), axis=0)[1:]
     return np.unique(img.reshape(-1, img.shape[-1]), axis=0)
 
 def generate_unique_colours(n):
@@ -593,6 +596,9 @@ def detect_image_colours(img:Optional[np.ndarray], inddict:bool = False, context
         lfltfix = (lfltfix * (CBLACK_CONSTANT + 1)).astype(np.uint8) # Convert to colour uints.
         if color_black_index != -1:
             lfltfix[color_black_index] = [0,0,0] # black should be (0,0,0)
+            # drop black color from the lfltfix
+            lfltfix = lfltfix[1:]
+        
     else: # No relevant colours.
         lfltfix = lfltrgb
     print("lfltfix: {}".format(lfltfix))

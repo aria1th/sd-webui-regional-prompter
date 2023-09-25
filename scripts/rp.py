@@ -377,7 +377,9 @@ class Script(modules.scripts.Script):
                 pass
         elif self.mode == "Mask" and polymask is not None: # image is uploaded, reprocess
             if not isinstance(polymask, np.ndarray):
-                f"polymask is not np.ndarray, type(polymask)={type(polymask)}, value={polymask}"
+                #print(f"polymask is not np.ndarray, type(polymask)={type(polymask)}, value={polymask}")
+                # try get image,from gradio 
+                polymask = polymask['image']
             print("Reprocessing uploaded mask image.")
             context = get_region_context()
             polymask,_,_ = draw_image(resize_image(polymask), context=context) # this updates context in-place
@@ -436,7 +438,7 @@ class Script(modules.scripts.Script):
             self.hr_h = (p.hr_resize_y if p.hr_resize_y > p.height else p.height * p.hr_scale)
             if self.hr_h % ATTNSCALE != 0 or self.hr_w % ATTNSCALE != 0:
                 # Testing shows a round down occurs in model.
-                print("Warning: Nonstandard height / width for ulscaled size")
+                print("Warning: Nonstandard height / width for upscaled size")
                 self.hr_h = self.hr_h - self.hr_h % ATTNSCALE
                 self.hr_w = self.hr_w - self.hr_w % ATTNSCALE
     
