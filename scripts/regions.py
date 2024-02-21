@@ -8,6 +8,7 @@ import PIL
 import torch
 from modules import devices
 
+from scripts.color_convert import convert_colors
 def lange(l):
     return range(len(l))
 
@@ -546,17 +547,21 @@ def detect_image_colours(img, inddict = False):
     # hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     # skimg = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2RGB)
     lrgb = get_colours(img)
+    print(lrgb)
     lhsv = np.apply_along_axis(lambda x: colorsys.rgb_to_hsv(*x), axis=-1, arr = lrgb / CBLACK)
     msk = ((lhsv[:,1] >= HSV_RANGE[0]) & (lhsv[:,1] <= HSV_RANGE[1]) &
            (lhsv[:,2] >= HSV_RANGE[0]) & (lhsv[:,2] <= HSV_RANGE[1]))
     lfltrgb = lrgb[msk]
     lflthsv = lhsv[msk]
     lflthsv[:,1:] = HSV_VAL
+    print(f"lfltrgb: {lfltrgb}")
+    print(f"lflthsv: {lflthsv}")
     if len(lfltrgb) > 0:
         lfltfix = np.apply_along_axis(lambda x: colorsys.hsv_to_rgb(*x), axis=-1, arr=lflthsv)
         lfltfix = (lfltfix * (CBLACK + 1)).astype(np.uint8)
     else: # No relevant colours.
         lfltfix = lfltrgb
+    print(f"lfltfix: {lfltfix}")
     # Mask update each colour in the image.
     # I tried to use isin, but it seems to detect any permutation.
     # It's better to roll colour channel to the front, add extra fake dims,
@@ -589,9 +594,12 @@ def detect_image_colours(img, inddict = False):
     # By setting an appropriate MAX_KEY_VALUE, these minor color differences can be effectively filtered out, 
     # thereby reducing the number of colors being processed and making color processing more accurate and efficient.
     MAX_KEY_VALUE = len(unique_keys) + 20
+    print(f"regrows: {regrows}")
     REGUSE = {reg[0,0]: reg[0,1:].tolist() for reg in regrows if len(reg) > 0 and reg[0,0] <= MAX_KEY_VALUE}
+    discarded = [reg[0,1:].tolist() for reg in regrows if len(reg) > 0 and reg[0,0] > MAX_KEY_VALUE]
+    print(f"dissed: {discarded}")
     # REGUSE.discard(COLWHITE)
-    
+    print(f"REGUSE: {REGUSE}")
     # Must set to dict due to gradio preprocess assertion, in preset load.
     # CONT: This doesn't work. Postprocess expects image. Maybe use dict for preset, not upload.
     if inddict:
@@ -612,8 +620,12 @@ def save_mask(img, flpath):
         pass
     if VARIANT != 0: # Always save without variance.
         img = img[:-VARIANT,:-VARIANT,:]
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(flpath, img)
+    try:
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(flpath, img)
+    except Exception:
+        print("Could not save mask to file.")
+        return None
 
 def load_mask(flpath):
     """Load mask from file.
@@ -738,10 +750,29 @@ def draw_region(img, num):
     dimg = img
     return dimg, num2, mask
 
+def draw_with_preprocessing(img: np.array, target_h, target_w):
+    """Runs colour detection followed by mask on -1 to show which colours are regions.
+    
+    """
+    #img = img.resize((target_w, target_h)) PIL
+    # from numpy to PIL, convert to RGB
+    orig_image = img
+    img = cv2.resize(img, (target_w, target_h)) # cv2
+    img = Image.fromarray(img).convert('RGB') # PIL
+    img = convert_colors(img)
+    img = np.array(img)
+    img, clearer = detect_image_colours(img)
+    mask = detect_mask(img, -1)
+    print(mask)
+    print(REGUSE)
+    dimg = img
+    return dimg, orig_image, mask # do not clear the input image
+
 def draw_image(img, inddict = False):
     """Runs colour detection followed by mask on -1 to show which colours are regions.
     
     """
+    # resize image to 
     img, clearer = detect_image_colours(img,inddict)
     mask = detect_mask(img, -1)
     dimg = img

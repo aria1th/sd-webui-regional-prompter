@@ -1,4 +1,6 @@
+import base64
 import inspect
+import io
 import os.path
 from importlib import reload
 import launch
@@ -27,7 +29,7 @@ from scripts.attention import (TOKENS, hook_forwards, reset_pmasks, savepmasks)
 from scripts.latent import (denoised_callback_s, denoiser_callback_s, lora_namer, setuploras, unloadlorafowards)
 from scripts.regions import (MAXCOLREG, IDIM, KEYBRK, KEYBASE, KEYCOMM, KEYPROMPT, ALLKEYS, ALLALLKEYS,
                              create_canvas, draw_region, #detect_mask, detect_polygons,  
-                             draw_image, save_mask, load_mask, changecs,
+                             draw_image, draw_with_preprocessing, save_mask, load_mask, changecs,
                              floatdef, inpaintmaskdealer, makeimgtmp, matrixdealer)
 
 FLJSON = "regional_prompter_presets.json"
@@ -116,7 +118,7 @@ def ui_tab(mode, submode):
         btn.click(draw_region, inputs = [polymask, num], outputs = [polymask, num, showmask])
         # btn2.click(detect_mask, inputs = [polymask,num], outputs = [showmask])
         cbtn.click(fn=create_canvas, inputs=[canvas_height, canvas_width], outputs=[polymask])
-        uploadmask.upload(fn = draw_image, inputs = [uploadmask], outputs = [polymask, uploadmask, showmask])
+        uploadmask.upload(fn = draw_with_preprocessing, inputs = [uploadmask, canvas_height, canvas_width], outputs = [polymask, uploadmask, showmask])
         
         vret = [xmode, polymask, num, canvas_width, canvas_height, btn, cbtn, showmask, uploadmask]
     elif mode == "Prompt":
@@ -378,10 +380,10 @@ class Script(modules.scripts.Script):
         savesets.click(fn=savepresets, inputs = [presetname,*settings],outputs=availablepresets)
         
         return [active, dummy_false, rp_selected_tab, mmode, xmode, pmode, ratios, baseratios,
-                usebase, usecom, usencom, calcmode, options, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper]
+                usebase, usecom, usencom, calcmode, options, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper, uploadmask]
 
     def process(self, p, active, a_debug , rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
-                usebase, usecom, usencom, calcmode, options, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper):
+                usebase, usecom, usencom, calcmode, options, lnter, lnur, threshold, polymask, lstop, lstop_hr, flipper, dummy_arbitrary_input):
 
         if type(options) is bool:
             options = ["disable convert 'AND' to 'BREAK'"] if options else []
@@ -394,13 +396,41 @@ class Script(modules.scripts.Script):
         debug = "debug" in options
         debug2 = "debug2" in options
         self.slowlora = OPTUSEL in options
+        if dummy_arbitrary_input is not None and rp_selected_tab == "Mask":
+            print("Loading from other image")
+            # load from other image
+            if isinstance(dummy_arbitrary_input, str):
+                # base64 image or a path
+                if os.path.exists(dummy_arbitrary_input):
+                    arr = np.array(Image.open(dummy_arbitrary_input))
+                    polymask,_,_ = draw_with_preprocessing(arr, 512, 512)
+                else:
+                    try:
+                        arr = np.array(Image.open(io.BytesIO(base64.b64decode(dummy_arbitrary_input.split(",")[1]))))
+                        polymask,_,_ =draw_with_preprocessing(arr, 512, 512)
+                    except:
+                        print("Tried to decode base64 or path but invalid")
+                        raise ValueError("Tried to decode base64 or path but invalid")
+            elif isinstance(dummy_arbitrary_input, np.ndarray):
+                polymask,_,_ =draw_with_preprocessing(dummy_arbitrary_input, 512, 512)
+            else:
+                raise ValueError("Neither string nor np.ndarray")
+        else:
+            print(f"Not loading from other image, rp_selected_tab = {rp_selected_tab}, dummy_arbitrary_input = {dummy_arbitrary_input}")
+            if type(polymask) == str:
+                if os.path.exists(polymask):
+                    try:
+                        polymask,_,_ = draw_image(np.array(Image.open(polymask)))
+                    except:
+                        pass
+                else:
+                    try:
+                        # base64 image
+                        from_base64 = np.array(Image.open(io.BytesIO(base64.b64decode(polymask.split(",")[1]))))
+                        polymask,_,_ = draw_image(from_base64)
+                    except:
+                        pass
 
-        if type(polymask) == str:
-            try:
-                polymask,_,_ = draw_image(np.array(Image.open(polymask)))
-            except:
-                pass
-        
         if rp_selected_tab == "Nope": rp_selected_tab = "Matrix"
 
         if debug: pprint([active, debug, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
@@ -444,6 +474,8 @@ class Script(modules.scripts.Script):
             "RP LoRA Hires Stop Step":lstop_hr,
             "RP Flip": flipper,
         })
+        if dummy_arbitrary_input is not None and rp_selected_tab == "Mask":
+            p.extra_generation_params.update({"RP from other image": True})
 
         savepresets("lastrun",rp_selected_tab, mmode, xmode, pmode, aratios,bratios,
                      usebase, usecom, usencom, calcmode, options, lnter, lnur, threshold, polymask,lstop, lstop_hr, flipper)
@@ -547,7 +579,7 @@ class Script(modules.scripts.Script):
                     pass
 
     def process_batch(self, p, active, _, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
-                      usebase, usecom, usencom, calcmode,nchangeand, lnter, lnur, threshold, polymask,lstop, lstop_hr,flipper,**kwargs):
+                      usebase, usecom, usencom, calcmode,nchangeand, lnter, lnur, threshold, polymask,lstop, lstop_hr,flipper, dummy_arbitrary_input,**kwargs):
         # print(kwargs["prompts"])
 
         if self.active:
