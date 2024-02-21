@@ -566,7 +566,7 @@ class Script(modules.scripts.Script):
             p.disable_extra_networks = False
 
     def before_hr(self, p, active, _, rp_selected_tab, mmode, xmode, pmode, aratios, bratios,
-                      usebase, usecom, usencom, calcmode,nchangeand, lnter, lnur, threshold, polymask,lstop, lstop_hr, flipper):
+                      usebase, usecom, usencom, calcmode,nchangeand, lnter, lnur, threshold, polymask,lstop, lstop_hr, flipper, dummy_arbitrary_input):
         if self.active:
             self.in_hr = True
             if "La" in self.calc:
